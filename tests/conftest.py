@@ -1,5 +1,10 @@
 import datetime
+import os
 from unittest.mock import AsyncMock, MagicMock
+
+# Set dummy config values before any module that imports config.py is loaded.
+os.environ.setdefault("TOKEN", "test-token")
+os.environ.setdefault("BASE_URL", "http://testserver/")
 
 import discord
 import pytest
