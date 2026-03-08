@@ -1,11 +1,13 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 import pytest
 from discord import app_commands
 
-from bot import on_app_command_error
+import bot as bot_module
+from bot import main, on_app_command_error
 from client.errors import BackendError
+from cogs.admin import AdminCog
 
 
 @pytest.fixture
@@ -117,3 +119,76 @@ class TestGenericError:
 
         msg = interaction.response.send_message.call_args[0][0]
         assert "secret internal error" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Admin feature flag
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_bot():
+    """A mock Bot that stops main() immediately after cog setup."""
+    bot = AsyncMock()
+    bot.tree = MagicMock()
+    bot.tree.error = MagicMock()
+    bot.event = lambda f: f  # pass-through decorator
+    bot.start.side_effect = asyncio.CancelledError
+    return bot
+
+
+class TestAdminFeatureFlag:
+    def test_flag_defaults_to_false(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_ADMIN", raising=False)
+        from config import Settings
+        s = Settings(token="t", base_url="http://x/")
+        assert s.enable_admin is False
+
+    @pytest.mark.asyncio
+    async def test_admin_cog_not_loaded_when_flag_is_false(self, monkeypatch):
+        monkeypatch.setattr(bot_module.settings, "enable_admin", False)
+
+        with patch("bot.commands.Bot", return_value=mock_bot_instance()), \
+             patch("bot.BackendClient", return_value=AsyncMock()):
+            try:
+                await main()
+            except asyncio.CancelledError:
+                pass
+
+        added_types = _added_cog_types()
+        assert AdminCog not in added_types
+
+    @pytest.mark.asyncio
+    async def test_admin_cog_loaded_when_flag_is_true(self, monkeypatch):
+        monkeypatch.setattr(bot_module.settings, "enable_admin", True)
+
+        with patch("bot.commands.Bot", return_value=mock_bot_instance()), \
+             patch("bot.BackendClient", return_value=AsyncMock()):
+            try:
+                await main()
+            except asyncio.CancelledError:
+                pass
+
+        added_types = _added_cog_types()
+        assert AdminCog in added_types
+
+
+# Helpers for the feature flag tests
+
+import asyncio
+
+_last_mock_bot = None
+
+
+def mock_bot_instance():
+    global _last_mock_bot
+    b = AsyncMock()
+    b.tree = MagicMock()
+    b.tree.error = MagicMock()
+    b.event = lambda f: f
+    b.start.side_effect = asyncio.CancelledError
+    _last_mock_bot = b
+    return b
+
+
+def _added_cog_types():
+    return [type(call.args[0]) for call in _last_mock_bot.add_cog.call_args_list]

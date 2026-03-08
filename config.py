@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     token: str
     base_url: str
+    enable_admin: bool = False
 
 
 settings = Settings()

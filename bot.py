@@ -52,7 +52,8 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     intents = discord.Intents.default()
-    intents.members = True
+    if settings.enable_admin:
+        intents.members = True
     bot = commands.Bot(command_prefix="!", intents=intents)
     backend = BackendClient(settings.base_url)
 
@@ -67,7 +68,8 @@ async def main() -> None:
     await bot.add_cog(MiscCog(backend))
     await bot.add_cog(PlayerCog(backend))
     await bot.add_cog(UmpireCog(backend, base_url=settings.base_url))
-    await bot.add_cog(AdminCog(backend))
+    if settings.enable_admin:
+        await bot.add_cog(AdminCog(backend))
 
     try:
         await bot.start(settings.token)
