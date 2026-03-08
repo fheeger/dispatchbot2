@@ -1,6 +1,7 @@
 import httpx
 from pydantic import TypeAdapter
 
+from client.errors import BackendError
 from client.models import (
     AccountCreatedResponse,
     AddCategoryResponse,
@@ -17,21 +18,17 @@ from client.models import (
 )
 
 
-class BackendError(Exception):
-    def __init__(self, status: int, error_type: str, message: str):
-        self.status = status
-        self.error_type = error_type
-        self.message = message
-        super().__init__(f"{error_type}: {message}")
-
-
 class BackendClient:
     def __init__(self, base_url: str):
-        self.base_url = base_url
+        self._http = httpx.AsyncClient(base_url=base_url)
 
-    async def _request(self, method: str, path: str, *, params: dict = None, json: dict = None) -> any:
-        async with httpx.AsyncClient(base_url=self.base_url) as http:
-            response = await http.request(method, path, params=params, json=json)
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+    async def _request(self, method: str, path: str, *,
+                       params: dict | None = None,
+                       json: dict | None = None) -> dict | list:
+        response = await self._http.request(method, path, params=params, json=json)
         if response.is_error:
             body = response.json()
             raise BackendError(response.status_code, body["error_type"], body["message"])

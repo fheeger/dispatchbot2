@@ -80,7 +80,7 @@ def message_payload():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mock_backend():
+def mock_backend(server_id):
     backend = AsyncMock(spec=BackendClient)
 
     backend.create_user.return_value = AccountCreatedResponse(
@@ -88,11 +88,11 @@ def mock_backend():
     )
     backend.create_game.return_value = GameCreatedResponse(
         name="Test-Game", turn=1, start_time="08:00:00",
-        server_id=111111111111111111, user_id=None,
+        server_id=server_id, user_id=None,
     )
     backend.get_round.return_value = RoundResponse(
         turn=3, name="Test-Game", start_time="08:00:00",
-        server_id=111111111111111111, user_id=None,
+        server_id=server_id, user_id=None,
     )
     backend.next_turn.return_value = TurnAdvancedResponse(
         name="Test-Game", turn=4, current_time="09:00:00"
@@ -177,8 +177,14 @@ def make_mock_message(content: str, has_send_emoji: bool = False,
 
 
 def async_iter(items):
-    """Return an async iterator over items, for mocking channel.history()."""
-    async def _inner():
-        for item in items:
-            yield item
-    return _inner()
+    """Return a reusable async iterable over items, for mocking channel.history().
+    Each async for loop gets a fresh iterator, so the same object can be iterated
+    multiple times without exhaustion.
+    """
+    class _AsyncIterable:
+        def __aiter__(self):
+            async def _inner():
+                for item in items:
+                    yield item
+            return _inner()
+    return _AsyncIterable()

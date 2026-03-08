@@ -16,6 +16,7 @@ class GameCreatedResponse(BaseModel):
 
 
 class RoundResponse(BaseModel):
+    # All fields are nullable: the backend returns nulls when no game is currently running.
     turn: int | None
     name: str | None
     start_time: str | None
@@ -56,12 +57,12 @@ class Message(BaseModel):
 
 class AddCategoryResponse(BaseModel):
     game: str
-    categories: list[int]
+    categories: list[int]  # plural — matches the backend's response key
 
 
 class RemoveCategoryResponse(BaseModel):
     game: str
-    category: list[int]
+    category: list[int]  # singular — intentional asymmetry with AddCategoryResponse, mirrors the backend API
 
 
 class CategoryResponse(BaseModel):
