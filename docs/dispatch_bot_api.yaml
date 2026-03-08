@@ -1,0 +1,654 @@
+openapi: 3.0.3
+info:
+  title: Dispatch Bot Backend API
+  description: >
+    API consumed by the Dispatch Bot Discord bot to manage games, players,
+    categories, channels, and turn-based message delivery.
+  version: 1.0.0
+
+servers:
+  - url: "{baseUrl}"
+    variables:
+      baseUrl:
+        default: http://localhost:8000/
+        description: The backend base URL (set via BASE_URL environment variable)
+
+paths:
+
+  /bot/new_user/:
+    post:
+      summary: Create an umpire account
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, discord_user_id_hash]
+              properties:
+                username:
+                  type: string
+                  description: Desired login username for the umpire web interface
+                discord_user_id_hash:
+                  type: string
+                  description: SHA-256 hash of the Discord user's ID
+      responses:
+        "201":
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username:
+                    type: string
+                  is_staff:
+                    type: boolean
+                  password:
+                    type: string
+                    description: Auto-generated 10-character alphanumeric password
+        "400":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_type: "User Already Exists"
+                message: "An user with the username john already exists"
+
+  /bot/new_game/:
+    post:
+      summary: Start a new game
+      operationId: createGame
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name_game, server_id, user_id, discord_user_id_hash, channels]
+              properties:
+                name_game:
+                  type: string
+                  description: >
+                    Unique game name. Only letters, digits, dashes, and
+                    underscores are allowed (no spaces).
+                  pattern: "^[0-9A-Za-z\\-_]+$"
+                server_id:
+                  type: integer
+                  description: Discord guild (server) ID
+                user_id:
+                  type: integer
+                  default: 0
+                discord_user_id_hash:
+                  type: string
+                  description: SHA-256 hash of the creating user's Discord ID
+                channels:
+                  type: array
+                  description: Initial list of player channels to register with the game
+                  items:
+                    type: object
+                    required: [name, id]
+                    properties:
+                      name:
+                        type: string
+                        description: Discord channel name
+                      id:
+                        type: integer
+                        description: Discord channel ID
+      responses:
+        "201":
+          description: Game created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  turn:
+                    type: integer
+                    description: Starting turn number (default 1)
+                  start_time:
+                    type: string
+                    format: time
+                    description: In-game start time (HH:MM:SS)
+                  server_id:
+                    type: integer
+                  user_id:
+                    type: integer
+                    nullable: true
+        "403":
+          description: No umpire account exists for this Discord user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_type: "No Account"
+                message: "You don't have an account"
+        "422":
+          description: A game with that name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_type: "Game Already Exists"
+                message: "A game with the same name is already going on! Please choose another name"
+
+  /bot/get_round/:
+    get:
+      summary: Get current game round
+      operationId: getRound
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: Current round info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  turn:
+                    type: integer
+                    nullable: true
+                    description: Current turn number, or null if no game is running
+                  name:
+                    type: string
+                  start_time:
+                    type: string
+                    format: time
+                    description: In-game start time (HH:MM:SS)
+                  server_id:
+                    type: integer
+                    nullable: true
+                  user_id:
+                    type: integer
+                    nullable: true
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/next_turn/:
+    post:
+      summary: Advance the game to the next turn
+      operationId: nextTurn
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: Turn advanced successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  turn:
+                    type: integer
+                    description: The new turn number
+                  current_time:
+                    type: string
+                    format: time
+                    description: In-game time for the new turn (HH:MM:SS)
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/end_game/:
+    post:
+      summary: End the current game
+      operationId: endGame
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: Game ended successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  turn:
+                    type: integer
+                  current_time:
+                    type: string
+                    format: time
+                    description: In-game time at end of game (HH:MM:SS)
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/get_messages/:
+    get:
+      summary: Get messages due for delivery this turn
+      operationId: getMessages
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: List of approved messages to deliver to player channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/check_messages/:
+    get:
+      summary: Check for player dispatches not yet approved by umpires
+      operationId: checkMessages
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: List of unapproved messages still pending umpire action
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/send_message/:
+    post:
+      summary: Submit a player dispatch
+      operationId: sendMessage
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text, sender]
+              properties:
+                text:
+                  type: string
+                  description: Full text content of the dispatch (max 2000 characters)
+                  maxLength: 2000
+                sender:
+                  type: string
+                  description: Discord display name of the sending player (max 100 characters)
+                  maxLength: 100
+      responses:
+        "201":
+          description: Dispatch received successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "422":
+          description: Dispatch text exceeds the game's maximum message length
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_type: "Message Too Long"
+                message: "Your message was too long. The maximum length for messages in this game is 500. The length of your message was 750."
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/add_category/{game_name}/:
+    post:
+      summary: Register one or more Discord categories with a game
+      operationId: addCategory
+      parameters:
+        - $ref: "#/components/parameters/GameNamePath"
+        - $ref: "#/components/parameters/ServerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                category:
+                  type: array
+                  items:
+                    type: integer
+                  description: List of Discord category IDs to add
+      responses:
+        "200":
+          description: Categories added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    type: string
+                    description: Name of the game
+                  categories:
+                    type: array
+                    items:
+                      type: integer
+                    description: List of category IDs now registered to the game
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+
+  /bot/remove_category/{game_name}/:
+    post:
+      summary: Remove one or more Discord categories from a game
+      operationId: removeCategory
+      parameters:
+        - $ref: "#/components/parameters/GameNamePath"
+        - $ref: "#/components/parameters/ServerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                category:
+                  type: array
+                  items:
+                    type: integer
+                  description: List of Discord category IDs to remove
+      responses:
+        "200":
+          description: Categories removed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    type: string
+                    description: Name of the game
+                  category:
+                    type: array
+                    items:
+                      type: integer
+                    description: List of category IDs remaining on the game
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+
+  /bot/get_categories/{game_name}/:
+    get:
+      summary: List all categories registered to a game
+      operationId: getCategories
+      parameters:
+        - $ref: "#/components/parameters/GameNamePath"
+        - $ref: "#/components/parameters/ServerId"
+      responses:
+        "200":
+          description: List of categories registered to the game
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    number:
+                      type: integer
+                      description: Discord category ID
+                    game:
+                      type: integer
+                      description: Internal game ID
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+
+  /bot/update_channels/:
+    post:
+      summary: Register or update player channels in a game
+      operationId: updateChannels
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channels]
+              properties:
+                channels:
+                  type: object
+                  description: Map of Discord channel ID (string key) to channel name
+                  additionalProperties:
+                    type: string
+                  example:
+                    "123456789": "alpha-company"
+                    "987654321": "bravo-company"
+      responses:
+        "200":
+          description: Channels updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    type: string
+                    description: Name of the game the channels were added to
+                  channels:
+                    type: object
+                    description: Map of channel ID (string) to channel name for all updated channels
+                    additionalProperties:
+                      type: string
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/remove_channels/:
+    post:
+      summary: Remove player channels from a game
+      operationId: removeChannels
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channels]
+              properties:
+                channels:
+                  type: array
+                  description: List of Discord channel IDs (as strings) to remove
+                  items:
+                    type: string
+                  example: ["123456789", "987654321"]
+      responses:
+        "200":
+          description: Channels removed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    type: string
+                    description: Name of the game
+                  channels:
+                    type: array
+                    description: List of channel IDs that were removed
+                    items:
+                      type: string
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+  /bot/get_channels/:
+    get:
+      summary: List all player channels in the game for the current category
+      operationId: getChannels
+      parameters:
+        - $ref: "#/components/parameters/ServerId"
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: List of registered player channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    channel_id:
+                      type: integer
+                      description: Discord channel ID
+                    name:
+                      type: string
+                      description: Discord channel name
+                    game:
+                      type: integer
+                      description: Internal game ID
+        "404":
+          $ref: "#/components/responses/GameNotFound"
+        "400":
+          $ref: "#/components/responses/GameAmbiguous"
+
+components:
+
+  parameters:
+    ServerId:
+      name: server_id
+      in: query
+      required: false
+      description: Discord guild (server) ID
+      schema:
+        type: integer
+
+    CategoryId:
+      name: category_id
+      in: query
+      required: false
+      description: Discord category ID, used to disambiguate which game to act on when a server has multiple games
+      schema:
+        type: integer
+
+    GameNamePath:
+      name: game_name
+      in: path
+      required: true
+      description: The game name as used when the game was created
+      schema:
+        type: string
+        pattern: "^[0-9A-Za-z\\-_]+$"
+
+  responses:
+    GameNotFound:
+      description: No game found matching the provided server_id and category_id
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error_type: "Game Not Found"
+            message: "No game found"
+
+    GameAmbiguous:
+      description: Multiple games match the provided filters and cannot be disambiguated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error_type: "Game Ambiguous"
+            message: "Can not decide which game you want"
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      required: [error_type, message]
+      properties:
+        error_type:
+          type: string
+          description: Machine-readable error type constant
+          enum:
+            - "Unknown Error"
+            - "No Account"
+            - "Message Too Long"
+            - "Game Already Exists"
+            - "Game Not Found"
+            - "Game Retrieval Error"
+            - "Game Ambiguous"
+            - "User Already Exists"
+        message:
+          type: string
+          description: Human-readable description of the error
+
+    RecipientChannel:
+      type: object
+      required: [channelId, channelName]
+      properties:
+        channelId:
+          type: integer
+          description: Discord channel ID
+        channelName:
+          type: string
+          description: Discord channel name
+
+    Message:
+      type: object
+      description: A dispatch message submitted by a player
+      required: [text, sender, showSender, channels_list, turn_when_sent, turn_when_received, game]
+      properties:
+        text:
+          type: string
+          description: The dispatch text content
+        sender:
+          type: string
+          description: Display name of the player who sent the dispatch
+        showSender:
+          type: boolean
+          description: >
+            If true, the sender's name is included in the delivered message.
+            If false, the dispatch is delivered anonymously.
+        channels_list:
+          type: array
+          description: List of Discord channels the message is addressed to
+          items:
+            $ref: "#/components/schemas/RecipientChannel"
+        turn_when_sent:
+          type: integer
+          description: The turn on which the dispatch was submitted
+        turn_when_received:
+          type: integer
+          nullable: true
+          description: The turn on which the dispatch is scheduled to be delivered
+        game:
+          type: integer
+          description: Internal ID of the game this message belongs to
